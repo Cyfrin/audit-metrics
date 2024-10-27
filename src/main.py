@@ -1,6 +1,11 @@
 import os
+import errno
+import stat
+import time
+import shutil
 import argparse
 import re
+import tempfile
 from typing import List
 from dotenv import load_dotenv
 from pathlib import Path
@@ -11,8 +16,46 @@ import subprocess
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Audit Metrics Tool')
-    parser.add_argument('--url', required=True, help='GitHub URL (repository, PR, or commit comparison)')
+    parser.add_argument('--url', help='GitHub URL (repository, PR, or commit comparison)')
+    parser.add_argument('--keep-git', action='store_true', help='Keep the temporary git repository after analysis')
+    parser.add_argument('--clean', action='store_true', help='Clean all repositories in out/repos directory and exit')
     return parser.parse_args()
+
+def handle_remove_readonly(func, path, exc):
+    """Handle read-only files during deletion"""
+    excvalue = exc[1]
+    if func in (os.rmdir, os.remove, os.unlink) and excvalue.errno == errno.EACCES:
+        # Change file access mode
+        os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        # Retry operation
+        func(path)
+    else:
+        raise
+
+def clean_repositories():
+    """Clean all repositories in the audit-metrics directory"""
+    audit_metrics_dir = Path(tempfile.gettempdir()) / "audit-metrics"
+
+    if audit_metrics_dir.exists():
+        max_attempts = 3
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                print(f"Attempting to clean {audit_metrics_dir}")
+                # Use the error handler for read-only files
+                shutil.rmtree(audit_metrics_dir, onerror=handle_remove_readonly)
+                print(f"Successfully cleaned audit-metrics directory: {audit_metrics_dir}")
+                break
+            except Exception as e:
+                attempt += 1
+                if attempt == max_attempts:
+                    print(f"Failed to clean directory after {max_attempts} attempts: {e}")
+                    print("Please close any applications that might be using these files and try again.")
+                else:
+                    print(f"Attempt {attempt} failed, retrying after short delay...")
+                    time.sleep(1)  # Wait a second before retrying
+    else:
+        print("No audit-metrics directory found to clean")
 
 def load_config():
     load_dotenv()
@@ -58,6 +101,17 @@ def run_cloc(directory: str, files: List[Path]) -> str:
 
 def main():
     args = parse_arguments()
+
+    # Handle clean mode
+    if args.clean:
+        clean_repositories()
+        return 0
+
+    # Require URL for normal operation
+    if not args.url:
+        print("Error: --url is required unless --clean is specified")
+        return 1
+
     config = load_config()
 
     # Create output directory if it doesn't exist
@@ -66,7 +120,8 @@ def main():
     print("\nConfiguration:")
     print(f"Extensions: {config['extensions']}")
     print(f"Include patterns: {config['include']}")
-    print(f"Exclude patterns: {config['exclude']}\n")
+    print(f"Exclude patterns: {config['exclude']}")
+    print(f"Keep git repo: {args.keep_git}\n")
 
     try:
         # Parse GitHub URL - no branch or commit args
@@ -139,8 +194,10 @@ def main():
         print(f"Error: {e}")
         return 1
     finally:
-        if 'repo_handler' in locals():
+        if 'repo_handler' in locals() and not args.keep_git:
             repo_handler.cleanup()
+        elif args.keep_git:
+            print(f"\nRepository kept at: {local_path}")
 
 if __name__ == '__main__':
     main()

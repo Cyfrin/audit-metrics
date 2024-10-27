@@ -44,7 +44,7 @@ class OutputGenerator:
             content.append(f"| {rel_path} | {sloc:,} |")
 
         # Add total SLOC
-        content.append("|**Total**|**{:,}**|".format(total_sloc))
+        content.append("|**Total ({:,} files)**|**{:,}**|".format(len(files), total_sloc))
 
         # Write to file
         with open(output_file, 'w', encoding='utf-8') as f:
