@@ -4,68 +4,98 @@ from utils import run_cloc
 
 class OutputGenerator:
     @staticmethod
-    def generate_tree_diagram(files: List[Path], root_path: Path, output_file: Path):
-        """Generate a markdown tree diagram of the files with SLOC information"""
-        tree_structure = {}
+    def generate_tree_diagram(files: List[Path], base_path: Path, output_file: Path, title: str = None) -> None:
+        """Generate a tree diagram of the files"""
+        try:
+            # Convert paths to relative paths and sort
+            rel_paths = sorted([str(Path(f).relative_to(base_path)) for f in files])
+            
+            # Generate markdown
+            lines = []
+            if title:
+                lines.append(f"# {title}\n")
 
-        # Get SLOC counts using cloc
-        file_stats = run_cloc(files)
+            # Add list of included files
+            lines.append("### Included Files:\n")
+            for path in rel_paths:
+                lines.append(f"- {path}")
+            lines.append("\n### File Tree:\n")
+            
+            # Create tree structure
+            tree = {}
+            for path in rel_paths:
+                current = tree
+                parts = path.split('/')
+                for part in parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                current[parts[-1]] = None
 
-        # Build tree structure
-        for file_path in files:
-            rel_path = file_path.relative_to(root_path)
-            parts = list(rel_path.parts)
+            def write_tree(node, prefix=''):
+                items = sorted(node.items())
+                for i, (name, subtree) in enumerate(items):
+                    is_last = i == len(items) - 1
+                    lines.append(f"{prefix}{'└── ' if is_last else '├── '}{name}")
+                    if subtree is not None:
+                        write_tree(subtree, prefix + ('    ' if is_last else '│   '))
 
-            # Build tree
-            current = tree_structure
-            for part in parts[:-1]:
-                if part not in current:
-                    current[part] = {}
-                current = current[part]
-            current[parts[-1]] = None
+            write_tree(tree)
+            
+            # Write to file
+            with open(output_file, 'a' if title else 'w') as f:
+                f.write('\n'.join(lines) + '\n\n')
 
-        # Generate markdown content
-        content = ["# Project Analysis\n"]
-
-        # Add directory structure
-        content.append("## Directory Structure\n")
-        content.extend(OutputGenerator._generate_tree_lines(tree_structure))
-
-        # Add SLOC table
-        content.append("\n## Code Analysis\n")
-        content.append("| File | Lines of Code |")
-        content.append("|------|---------------|")
-
-        total_sloc = 0
-        for file_path in sorted(files):
-            rel_path = file_path.relative_to(root_path)
-            sloc = file_stats.get(str(file_path), 0)
-            total_sloc += sloc
-            content.append(f"| {rel_path} | {sloc:,} |")
-
-        # Add total SLOC
-        content.append("|**Total ({:,} files)**|**{:,}**|".format(len(files), total_sloc))
-
-        # Write to file
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(content))
+        except Exception as e:
+            print(f"Error generating tree diagram: {e}")
 
     @staticmethod
-    def _generate_tree_lines(tree: Dict, prefix: str = '', is_last: bool = True) -> List[str]:
-        """Generate lines for the tree diagram"""
-        lines = []
-        items = list(tree.items())
+    def generate_combined_report(primary_files: List[Path], all_files: List[Path], 
+                               base_path: Path, output_file: Path,
+                               primary_cloc: str, full_cloc: str) -> None:
+        """Generate a combined report with both primary and full analysis"""
+        output_file.parent.mkdir(exist_ok=True)
 
-        for i, (name, subtree) in enumerate(items):
-            is_last_item = i == len(items) - 1
+        def extract_cloc_summary(cloc_output: str) -> tuple[int, int]:
+            """Extract total files and code lines from CLOC output"""
+            for line in cloc_output.split('\n'):
+                if line.startswith('SUM:'):
+                    parts = line.split()
+                    return int(parts[1]), int(parts[4])  # files, code
+            return 0, 0
 
-            # Create the prefix for the current line
-            current_prefix = prefix + ('└── ' if is_last_item else '├── ')
-            lines.append(current_prefix + name)
+        def format_file_list(files: List[Path]) -> str:
+            return '\n'.join(f"- {f.relative_to(base_path)}" for f in sorted(files))
 
-            if subtree is not None:
-                # Create the prefix for subtree lines
-                subtree_prefix = prefix + ('    ' if is_last_item else '│   ')
-                lines.extend(OutputGenerator._generate_tree_lines(subtree, subtree_prefix, is_last_item))
+        # Get statistics
+        primary_files_count, primary_nsloc = extract_cloc_summary(primary_cloc)
+        
+        # Generate report
+        report = [
+            "# Code Analysis Report\n",
+            f"## Primary Analysis ({primary_files_count} files, {primary_nsloc} nSLOC)\n",
+            "### Files Analyzed:",
+            format_file_list(primary_files),
+            "\n### CLOC Analysis",
+            "```",
+            primary_cloc.strip(),
+            "```\n"
+        ]
 
-        return lines
+        # Add dependency analysis if there are additional files
+        if len(all_files) > len(primary_files):
+            total_files_count, total_nsloc = extract_cloc_summary(full_cloc)
+            dependency_files = sorted(set(all_files) - set(primary_files))
+            
+            report.extend([
+                f"\n## Full Analysis ({total_files_count} files, {total_nsloc} nSLOC)\n",
+                "### Additional Dependencies:",
+                format_file_list(dependency_files),
+                "\n### CLOC Analysis",
+                "```",
+                full_cloc.strip(),
+                "```"
+            ])
+
+        # Write report
+        output_file.write_text('\n'.join(report))

@@ -6,6 +6,7 @@ import git
 import shutil
 from pathlib import Path
 import tempfile
+from remove_rust_t import remove_tests_from_all_rust_files
 
 @dataclass
 class GitHubInfo:
@@ -128,15 +129,15 @@ class GitRepoHandler:
         self.github_info = github_info
         self.repo = None
         self.workspace_dir = None
+        self.temp_analysis_dir = None
+
+        # Get GitHub token once during initialization
         self.github_token = os.getenv('GITHUB_TOKEN')
+        if not self.github_token:
+            print("Debug: Environment variables:", {k: v for k, v in os.environ.items() if 'TOKEN' in k})
+            raise ValueError("GITHUB_TOKEN not found in environment variables")
 
-    def _get_clone_url(self) -> str:
-        """Get clone URL with authentication if token is available"""
-        if self.github_token:
-            return f"https://{self.github_token}@github.com/{self.github_info.owner}/{self.github_info.repo}.git"
-        return f"https://github.com/{self.github_info.owner}/{self.github_info.repo}.git"
-
-    def _setup_workspace(self) -> str:
+    def _setup_workspace(self) -> Path:
         """Create a temporary directory for the repository"""
         workspace = Path(tempfile.gettempdir()) / "audit-metrics" / f"{self.github_info.owner}_{self.github_info.repo}"
         workspace.parent.mkdir(exist_ok=True)
@@ -146,30 +147,42 @@ class GitRepoHandler:
             shutil.rmtree(workspace)
 
         workspace.mkdir()
-        return str(workspace)
+        return workspace
 
     def clone_repo(self) -> str:
-        """Clone the repository and checkout the appropriate ref"""
-        self.workspace_dir = self._setup_workspace()
-        clone_url = self._get_clone_url()
-
+        """Clone repository and handle different GitHub URL types"""
         try:
-            # Print URL without token for security
+            # Setup workspace
+            self.workspace_dir = self._setup_workspace()
+
+            # Create clone URL with token
+            clone_url = f"https://{self.github_token}@github.com/{self.github_info.owner}/{self.github_info.repo}.git"
+
             print(f"Cloning repository from https://github.com/{self.github_info.owner}/{self.github_info.repo}.git...")
+
+            # Clone repository
             self.repo = git.Repo.clone_from(clone_url, self.workspace_dir)
 
-            if self.github_info.type == 'repo':
-                self._handle_repo_checkout()
-            elif self.github_info.type == 'pr':
+            # Handle different URL types
+            if self.github_info.type == 'pr':
                 self._handle_pr_fetch()
             elif self.github_info.type == 'comparison':
                 self._handle_comparison_fetch()
+            else:
+                # For regular repository, checkout default branch
+                try:
+                    default_branch = self.repo.git.symbolic_ref('refs/remotes/origin/HEAD').replace('refs/remotes/origin/', '')
+                    print(f"Detected default branch: {default_branch}")
+                    self.repo.git.checkout(default_branch)
+                except git.GitCommandError:
+                    print("Could not detect default branch, using current HEAD")
 
-            self.github_info.local_path = self.workspace_dir
-            return self.workspace_dir
+            return str(self.workspace_dir)
 
         except git.GitCommandError as e:
             print(f"Git operation failed: {e}")
+            print(f"Git command that failed: {e.command}")
+            print(f"Git error message:\n  {e.stderr}")
             self.cleanup()
             raise
         except Exception as e:
@@ -248,59 +261,55 @@ class GitRepoHandler:
             raise
 
     def _handle_comparison_fetch(self):
-        """Handle fetch for comparison"""
-        print("Fetching comparison commits...")
+        """Handle fetching for commit comparison"""
         try:
-            # Fetch all refs first to ensure we have all necessary history
-            print("Fetching all refs...")
-            self.repo.remote().fetch('--all')
+            print("Fetching comparison commits...")
 
-            print(f"Fetching base commit: {self.github_info.base_commit}")
-            self.repo.git.fetch('origin', self.github_info.base_commit)
-            print(f"Fetching head commit: {self.github_info.head_commit}")
-            self.repo.git.fetch('origin', self.github_info.head_commit)
+            # Clean up commit hashes (remove quotes and extra characters)
+            base_commit = self.github_info.base_commit.strip("'\"")
+            head_commit = self.github_info.head_commit.strip("'\"")
 
-            # Verify both commits exist
-            try:
-                base_commit = self.repo.commit(self.github_info.base_commit)
-                head_commit = self.repo.commit(self.github_info.head_commit)
-                print(f"Base commit {base_commit.hexsha} and head commit {head_commit.hexsha} verified")
-            except git.BadName as e:
-                print(f"Could not find one of the commits: {e}")
-                # Try to handle abbreviated commit hashes
-                if len(self.github_info.base_commit) < 40 or len(self.github_info.head_commit) < 40:
-                    try:
-                        base_commit = self.repo.git.rev_parse(self.github_info.base_commit)
-                        head_commit = self.repo.git.rev_parse(self.github_info.head_commit)
-                        print(f"Resolved commits using rev-parse: {base_commit}, {head_commit}")
-                    except git.GitCommandError:
-                        raise ValueError("Could not resolve commit hashes")
+            print(f"Base commit: {base_commit}")
+            print(f"Head commit: {head_commit}")
 
-            # Create and checkout a temporary branch for the head commit
-            temp_branch = f"comparison_{self.github_info.head_commit[:7]}"
+            # Fetch the specific commits
+            self.repo.remote().fetch(base_commit)
+            self.repo.remote().fetch(head_commit)
 
-            # Check if the temporary branch already exists
-            try:
-                if temp_branch in self.repo.heads:
-                    print(f"Removing existing temporary branch {temp_branch}")
-                    self.repo.delete_head(temp_branch, force=True)
+            # Checkout head commit
+            self.repo.git.checkout(head_commit)
 
-                print(f"Creating and checking out temporary branch {temp_branch}")
-                self.repo.git.checkout(self.github_info.head_commit, b=temp_branch)
-            except git.GitCommandError as e:
-                print(f"Failed to create temporary branch: {e}")
-                # Fallback: try to checkout the commit directly
-                print("Falling back to direct commit checkout")
-                self.repo.git.checkout(self.github_info.head_commit)
-
-        except git.GitCommandError as e:
-            print(f"Git operation failed during comparison fetch: {e}")
-            print(f"Git command that failed: {e.command}")
-            print(f"Git error message: {e.stderr}")
-            raise
         except Exception as e:
-            print(f"Unexpected error during comparison fetch: {str(e)}")
+            print(f"Error during comparison fetch: {e}")
             raise
+
+    def _get_comparison_changed_files(self) -> list[str]:
+        """Get files changed between the comparison commits"""
+        try:
+            # Clean up commit hashes
+            base_commit = self.github_info.base_commit.strip("'\"")
+            head_commit = self.github_info.head_commit.strip("'\"")
+
+            # Use the specific commits for diff
+            diff_str = self.repo.git.diff('--name-only', base_commit, head_commit)
+
+            changed_files = [
+                str(Path(self.workspace_dir) / f.strip())
+                for f in diff_str.split('\n')
+                if f.strip()
+            ]
+
+            print("\nChanged files in comparison:")
+            for file in changed_files:
+                print(f"- {Path(file).relative_to(self.workspace_dir)}")
+
+            return changed_files
+
+        except Exception as e:
+            print(f"Error getting comparison changed files: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     def get_changed_files(self) -> list[str]:
         """Get list of changed files based on the type of analysis"""
@@ -313,198 +322,150 @@ class GitRepoHandler:
         return []
 
     def _get_all_files(self) -> list[str]:
-        """Get all files in the repository with proper include/exclude filtering"""
+        """Get all files in the repository"""
         all_files = [str(Path(self.workspace_dir) / item)
                     for item in self.repo.git.ls_files().split('\n') if item]
 
-        print("\n=== All Repository Files ===")
-        print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in all_files))
+        # Debug output only if verbose mode is enabled
+        # print("\n=== All Repository Files ===")
+        # print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in all_files))
 
-        # Get environment variables
-        extensions = os.getenv('EXTENSIONS', '').strip().split(',')
-        includes = [p.strip() for p in os.getenv('INCLUDE', '').split(',') if p.strip()]
-        excludes = [p.strip() for p in os.getenv('EXCLUDE', '').split(',') if p.strip()]
-
-        def glob_to_regex(pattern: str) -> str:
-            if not pattern:
-                return ".*"  # Match everything if pattern is empty
-
-            # Replace directory separators with forward slashes
-            pattern = pattern.replace('\\', '/')
-
-            # Escape special regex characters except * and ?
-            pattern = (
-                pattern
-                .replace('.', r'\.')
-                .replace('+', r'\+')
-                .replace('(', r'\(')
-                .replace(')', r'\)')
-                .replace('|', r'\|')
-                .replace('^', r'\^')
-                .replace('$', r'\$')
-                .replace('{', r'\{')
-                .replace('}', r'\}')
-                .replace('[', r'\[')
-                .replace(']', r'\]')
-            )
-
-            # Convert glob patterns to regex patterns
-            pattern = pattern.replace('*', '.*').replace('?', '.')
-
-            return pattern
-
-        # Compile regex patterns
-        include_patterns = [re.compile(glob_to_regex(p)) for p in includes] if includes else [re.compile(".*")]
-        exclude_patterns = [re.compile(glob_to_regex(p)) for p in excludes] if excludes else []
-
-        print(f"\nFilter Settings:")
-        print(f"Extensions: {extensions}")
-        print(f"Include patterns: {[p.pattern for p in include_patterns]}")
-        print(f"Exclude patterns: {[p.pattern for p in exclude_patterns]}\n")
-
-        # Convert paths to Path objects for better path manipulation
-        files = [Path(f) for f in all_files]
-
-        def should_include_file(file_path: Path) -> bool:
-            # Normalize path to use forward slashes
-            rel_path = str(file_path.relative_to(self.workspace_dir)).replace('\\', '/')
-
-            # Check extensions
-            if extensions and not any(str(file_path).lower().endswith(ext.lower()) for ext in extensions):
-                # print(f"Skipping {rel_path} - extension not in {extensions}")
-                return False
-
-            # Check excludes first
-            for exclude_pattern in exclude_patterns:
-                if exclude_pattern.search(rel_path):
-                    # print(f"Skipping {rel_path} - matches exclude pattern '{exclude_pattern.pattern}'")
-                    return False
-
-            # Check includes
-            for include_pattern in include_patterns:
-                if include_pattern.search(rel_path):
-                    # print(f"Including {rel_path} - matches include pattern '{include_pattern.pattern}'")
-                    return True
-
-            # print(f"Skipping {rel_path} - doesn't match any include patterns")
-            return False
-
-        filtered_files = [str(f) for f in files if should_include_file(f)]
-
-        print("\n=== Files After Filtering ===")
-        print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in filtered_files))
-        print("\n")
-
-        return filtered_files
+        return all_files
 
     def _get_pr_changed_files(self) -> list[str]:
-        """Get files changed in the pull request with filtering"""
+        """Get files changed in the pull request"""
         try:
-            # Get the default branch name or fallback to main
-            try:
-                default_branch = self.repo.git.symbolic_ref('refs/remotes/origin/HEAD').replace('refs/remotes/origin/', '')
-            except git.GitCommandError:
-                print("Warning: Could not detect default branch, falling back to 'main'")
-                default_branch = 'main'
+            # Fetch PR information using GitHub API
+            pr_info = self._get_pr_info()
+            base_branch = pr_info['base']['ref']
+            base_sha = pr_info['base']['sha']
+            head_sha = pr_info['head']['sha']
 
-            print(f"Using {default_branch} as base branch for comparison")
+            # Fetch both base and PR head
+            self.repo.remotes.origin.fetch([
+                f'+refs/heads/{base_branch}:refs/remotes/origin/{base_branch}',
+                f'+refs/pull/{self.github_info.pr_number}/head:refs/remotes/origin/pr/{self.github_info.pr_number}'
+            ])
 
-            # Get the PR commit
-            pr_ref = f"origin/pr/{self.github_info.pr_number}"
-            pr_commit = self.repo.commit(pr_ref)
-            print(f"PR HEAD commit: {pr_commit.hexsha}")
+            # Get the diff between base and PR head
+            diff_str = self.repo.git.diff('--name-only', base_sha, head_sha)
 
-            try:
-                # Try to get the merge base
-                merge_base = self.repo.git.merge_base(f'origin/{default_branch}', pr_commit.hexsha).strip()
-                print(f"Found merge base commit: {merge_base}")
-                diff_str = self.repo.git.diff(f'{merge_base}...{pr_commit.hexsha}', name_only=True)
-            except git.GitCommandError as e:
-                print(f"Warning: Could not find merge base, falling back to direct diff: {e}")
-                # Fallback to comparing with the current HEAD~1
-                diff_str = self.repo.git.diff('HEAD~1', name_only=True)
-
-            all_changed_files = [
+            return [
                 str(Path(self.workspace_dir) / f.strip())
                 for f in diff_str.split('\n')
                 if f.strip()
             ]
 
-            print("\n=== Changed Files in PR ===")
-            print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in all_changed_files))
-
-            # Reuse the _get_all_files method's filtering logic
-            temp_files = self._get_all_files()
-            filtered_changed_files = [f for f in all_changed_files if f in temp_files]
-
-            print("\n=== Final Files for Analysis (PR) ===")
-            print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in filtered_changed_files))
-            print("\n")
-
-            return filtered_changed_files
-
         except Exception as e:
-            print(f"Error getting changed files: {str(e)}")
+            print(f"Error getting PR changed files: {str(e)}")
             import traceback
             traceback.print_exc()
             return []
 
-    def _get_comparison_changed_files(self) -> list[str]:
-        """Get files changed between the comparison commits with filtering"""
-        diff_index = self.repo.commit(self.github_info.head_commit).diff(self.github_info.base_commit)
-        all_changed_files = [str(Path(self.workspace_dir) / item.a_path) for item in diff_index]
+    def _get_pr_info(self):
+        """Get PR information using GitHub API"""
+        import requests
 
-        print("\n=== Changed Files in Comparison ===")
-        print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in all_changed_files))
+        headers = {
+            'Authorization': f'token {os.getenv("GITHUB_TOKEN")}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
 
-        # Reuse the _get_all_files method's filtering logic
-        temp_files = self._get_all_files()
-        filtered_changed_files = [f for f in all_changed_files if f in temp_files]
+        url = f'https://api.github.com/repos/{self.github_info.owner}/{self.github_info.repo}/pulls/{self.github_info.pr_number}'
 
-        print("\n=== Final Files for Analysis (Comparison) ===")
-        print("\n".join(f"- {Path(f).relative_to(self.workspace_dir)}" for f in filtered_changed_files))
-        print("\n")
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get PR info: {response.status_code} - {response.text}")
 
-        return filtered_changed_files
+        return response.json()
+
+    def prepare_workspace(self) -> str:
+        """Prepare workspace for analysis, including test removal"""
+        # Clone the repository first
+        self._clone_repository()
+
+        # Create a temporary directory for analysis
+        self.temp_analysis_dir = tempfile.mkdtemp()
+
+        # Copy repository contents to temporary directory
+        shutil.copytree(self.workspace_dir, self.temp_analysis_dir, dirs_exist_ok=True)
+
+        # Remove tests from the temporary directory
+        print("Removing test files and inline tests for accurate analysis...")
+        remove_tests_from_all_rust_files(self.temp_analysis_dir)
+
+        return self.temp_analysis_dir
 
     def cleanup(self):
-        """Clean up the workspace with retry and force on Windows"""
-        if not self.workspace_dir or not os.path.exists(self.workspace_dir):
-            return
-
-        if self.repo:
-            try:
-                self.repo.git.clear_cache()
-                self.repo.close()
-            except:
-                pass
-            self.repo = None
-
-        def on_error(func, path, exc_info):
-            """Error handler for shutil.rmtree"""
-            import stat
-            # If permission error, try to change permissions
-            if isinstance(exc_info[1], PermissionError):
-                try:
-                    os.chmod(path, stat.S_IWRITE)
-                    func(path)
-                except:
-                    pass
-
-        # Wait a bit before trying to remove
+        """Clean up temporary directories and handle locked files"""
         import time
-        time.sleep(1)
+        from pathlib import Path
+        import shutil
+        import os
+        import stat
+
+        def handle_error(func, path, exc_info):
+            """Error handler for permission issues"""
+            if not os.path.exists(path):
+                return
+
+            # Get error details
+            error = exc_info[1]
+            if isinstance(error, (OSError, PermissionError)):
+                try:
+                    # Make file writable
+                    os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+                    # Retry the operation
+                    func(path)
+                except Exception as e:
+                    print(f"Warning: Failed to remove {path}: {e}")
+                    # On Windows, try using system commands as last resort
+                    if os.name == 'nt':
+                        try:
+                            os.system(f'rd /s /q "{path}"')
+                        except:
+                            pass
 
         try:
-            shutil.rmtree(self.workspace_dir, onerror=on_error)
-        except Exception as e:
-            print(f"Warning: Could not fully remove temporary directory: {e}")
-            # On Windows, try using system commands as last resort
-            if os.name == 'nt':
+            # Clean up analysis directory first
+            if self.temp_analysis_dir and os.path.exists(self.temp_analysis_dir):
+                print(f"Cleaning up temporary analysis directory: {self.temp_analysis_dir}")
+                shutil.rmtree(self.temp_analysis_dir, onerror=handle_error)
+
+            # Close git repo
+            if self.repo:
                 try:
+                    self.repo.git.clear_cache()
+                    self.repo.close()
+                except Exception as e:
+                    print(f"Warning: Error closing git repo: {e}")
+                self.repo = None
+
+            # Wait a moment before cleaning workspace
+            time.sleep(1)
+
+            # Clean up workspace directory
+            if self.workspace_dir and os.path.exists(self.workspace_dir):
+                print(f"Cleaning up workspace directory: {self.workspace_dir}")
+                shutil.rmtree(self.workspace_dir, onerror=handle_error)
+
+            # Clean up parent temp directory if empty
+            if self.workspace_dir:
+                parent_dir = Path(self.workspace_dir).parent
+                try:
+                    if parent_dir.exists() and not any(parent_dir.iterdir()):
+                        parent_dir.rmdir()
+                except Exception as e:
+                    print(f"Warning: Could not remove parent directory: {e}")
+
+        except Exception as e:
+            print(f"Warning: Error during cleanup: {e}")
+            # Try one last time with system commands on Windows
+            if os.name == 'nt':
+                if self.temp_analysis_dir:
+                    os.system(f'rd /s /q "{self.temp_analysis_dir}"')
+                if self.workspace_dir:
                     os.system(f'rd /s /q "{self.workspace_dir}"')
-                except:
-                    pass
 
 def clone_repository(github_info: GitHubInfo) -> str:
     """Helper function to clone a repository"""

@@ -20,9 +20,11 @@ def run_cloc(files: List[Path]) -> Dict[str, int]:
             if result.returncode == 0:
                 try:
                     cloc_data = json.loads(result.stdout)
-                    # Get the code count from the Solidity section
+                    # Get the code count from the Solidity or Rust section
                     if 'Solidity' in cloc_data:
                         file_stats[str(file_path)] = cloc_data['Solidity']['code']
+                    elif 'Rust' in cloc_data:
+                        file_stats[str(file_path)] = cloc_data['Rust']['code']
                     else:
                         # Fallback: check SUM section
                         if 'SUM' in cloc_data:

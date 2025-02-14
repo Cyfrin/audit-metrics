@@ -1,16 +1,18 @@
 # Audit Metrics Tool
 
 A Python-based tool for analyzing GitHub repositories, pull requests, and commit comparisons.
-It helps identify and analyze Solidity files and their dependencies, generating metrics and visualizations useful for code audits.
+It helps identify and analyze source files and their dependencies, generating metrics and visualizations useful for code audits.
 
 ## Features
 
 - Analyzes GitHub repositories, pull requests, or commit comparisons
-- Identifies primary Solidity files and their dependencies
+- Identifies primary source files and their dependencies
 - Generates tree diagrams of file structures
 - Produces code metrics using CLOC (Count Lines of Code)
 - Configurable file extensions, include/exclude patterns
 - Supports custom filtering of files and dependencies
+- Automatic test removal for Rust codebases
+- Supports both local and remote repositories
 
 ## Prerequisites
 
@@ -35,17 +37,33 @@ pip install -r requirements.txt
 3. Create a `.env` file in the project root:
 ```env
 GITHUB_TOKEN=your_github_token_here
-EXTENSIONS=.sol
+EXTENSIONS=.sol,.rs
 INCLUDE=
-EXCLUDE=node_modules/*,*/@openzeppelin/*,*/solmate/*
+EXCLUDE=test/,tests/,mock/,.t.sol,Test.sol,Mock.sol,script/,forge-std/,solmate/
 ```
 
 ## Usage
 
+### Analyzing Code
+
 Run the tool with a GitHub URL:
 
 ```bash
-python main.py --url <github-url>
+python src/main.py --url <github-url>
+```
+
+### Removing Tests
+
+For local directory:
+
+```bash
+python src/main.py --remove-tests [--dir <directory>]
+```
+
+For remote repository:
+
+```bash
+python src/main.py --remove-tests --url <github-url>
 ```
 
 The URL can be:
@@ -53,12 +71,30 @@ The URL can be:
 - Pull Request URL: `https://github.com/owner/repo/pull/123`
 - Commit comparison URL: `https://github.com/owner/repo/compare/commit1...commit2`
 
+Example:
+```bash
+python src/main.py --url https://github.com/Cyfrin/cyfrin-attester
+python src/main.py --url https://github.com/Cyfrin/cyfrin-attester/pull/2
+python src/main.py --url https://github.com/Cyfrin/cyfrin-attester/compare/d8e18d59e82945e1382601866ce09784c01c0eb3...8d382f585b377de0c00f6bc489f637ab43be5550
+```
+
+### Test Removal
+
+The tool can remove test files and inline tests from Rust files. This includes:
+- Removing files with 'test' in their name
+- Removing inline test modules marked with #[cfg(test)] or #[test]
+- Excluding test-only code blocks
+
+You can use the --remove-tests flag to:
+- Clean tests from a local directory
+- Clone and clean tests from a remote repository
+
 ## Configuration
 
 Configure the tool through environment variables in `.env`:
 
 - `GITHUB_TOKEN`: Your GitHub Personal Access Token (required)
-- `EXTENSIONS`: Comma-separated list of file extensions to analyze (default: `.sol`)
+- `EXTENSIONS`: Comma-separated list of file extensions to analyze (e.g., `.sol,.rs`)
 - `INCLUDE`: Comma-separated list of patterns to include
 - `EXCLUDE`: Comma-separated list of patterns to exclude
 
@@ -66,23 +102,24 @@ Configure the tool through environment variables in `.env`:
 
 The tool generates output in the `out` directory:
 
-- `files_primary.md`: Tree diagram of primary files
-- `metrics.md`: Tree diagram of all files including dependencies
-- `files_to_analyze.txt`: List of files analyzed
-- `cloc_analysis.txt`: CLOC analysis results
+- `analysis_report.md`: Complete analysis report including:
+  - List of primary files analyzed
+  - Dependencies (if any)
+  - CLOC analysis results
+  - Total files and nSLOC counts
 
 ## Example
 
 ```bash
-python main.py --url https://github.com/owner/repo/pull/123
+python src/main.py --url https://github.com/owner/repo/pull/123
 ```
 
 Sample output:
 ```
 Configuration:
-Extensions: ['.sol']
+Extensions: ['.rs']
 Include patterns: []
-Exclude patterns: ['node_modules/*']
+Exclude patterns: ['test/', 'mock/', '.t.sol']
 
 Parsed GitHub URL info:
 Type: pull

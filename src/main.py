@@ -13,13 +13,26 @@ from git_handler import parse_github_url, GitRepoHandler
 from file_analyzer import FileAnalyzer
 from output_generator import OutputGenerator
 import subprocess
+from remove_rust_t import remove_tests_from_all_rust_files
+
+# Load environment variables at the start
+load_dotenv()
 
 def parse_arguments():
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Audit Metrics Tool')
     parser.add_argument('--url', help='GitHub URL (repository, PR, or commit comparison)')
-    parser.add_argument('--keep-git', action='store_true', help='Keep the temporary git repository after analysis')
-    parser.add_argument('--clean', action='store_true', help='Clean all repositories in out/repos directory and exit')
-    return parser.parse_args()
+    parser.add_argument('--remove-tests', action='store_true',
+                       help='Remove test files and inline tests from Rust files')
+    parser.add_argument('--dir', help='Directory to process (defaults to current directory)',
+                       default='.')
+    parser.add_argument('--keep-git', action='store_true',
+                       help='Keep the temporary git repository after analysis')
+    parser.add_argument('--clean', action='store_true',
+                       help='Clean all repositories in out/repos directory and exit')
+
+    args = parser.parse_args()
+    return args
 
 def handle_remove_readonly(func, path, exc):
     """Handle read-only files during deletion"""
@@ -99,18 +112,94 @@ def run_cloc(directory: str, files: List[Path]) -> str:
         print(f"Error running cloc: {e}")
         return ""
 
+def cleanup_temp_directories():
+    """Clean up any leftover temporary directories"""
+    import shutil
+    import os
+    from pathlib import Path
+    import stat
+    import time
+
+    temp_dir = Path(tempfile.gettempdir()) / "audit-metrics"
+    if not temp_dir.exists():
+        return
+
+    def handle_error(func, path, exc_info):
+        if not os.path.exists(path):
+            return
+        try:
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            func(path)
+        except:
+            if os.name == 'nt':
+                try:
+                    os.system(f'rd /s /q "{path}"')
+                except:
+                    pass
+
+    print(f"\nCleaning up temporary directories...")
+    try:
+        # Give processes time to release handles
+        time.sleep(1)
+        shutil.rmtree(temp_dir, onerror=handle_error)
+        print(f"Successfully cleaned up: {temp_dir}")
+    except Exception as e:
+        print(f"Warning: Could not fully clean up temporary directories: {e}")
+
+def handle_test_removal(directory: str, is_remote: bool = False) -> None:
+    """Handle test removal for both local and remote codebases"""
+    try:
+        if is_remote:
+            # Parse GitHub URL and clone repository
+            github_info = parse_github_url(directory)
+            print(f"\nParsed GitHub URL info:")
+            print(f"Type: {github_info.type}")
+            print(f"Owner: {github_info.owner}")
+            print(f"Repo: {github_info.repo}")
+
+            # Clone repository
+            repo_handler = GitRepoHandler(github_info)
+            local_path = repo_handler.clone_repo()
+            print(f"\nRepository cloned to: {local_path}")
+
+            # Remove tests
+            print("\nRemoving test files and inline tests...")
+            remove_tests_from_all_rust_files(local_path)
+
+            print(f"\nTests removed successfully from: {local_path}")
+            print("Note: Changes are in the cloned directory. Original repository is unchanged.")
+        else:
+            # Handle local directory
+            print(f"\nRemoving test files and inline tests from: {directory}")
+            remove_tests_from_all_rust_files(directory)
+            print("Tests removed successfully.")
+
+    except Exception as e:
+        print(f"Error during test removal: {e}")
+        raise
+
 def main():
     args = parse_arguments()
+
+    # Clean up any leftover temp directories first
+    cleanup_temp_directories()
+
+    if args.remove_tests:
+        # Determine if we're dealing with a URL or local directory
+        is_remote = bool(args.url)
+        target = args.url if is_remote else args.dir
+
+        handle_test_removal(target, is_remote)
+        return
+
+    if not args.url:
+        parser.error('Please provide either --url or --remove-tests')
+        return
 
     # Handle clean mode
     if args.clean:
         clean_repositories()
         return 0
-
-    # Require URL for normal operation
-    if not args.url:
-        print("Error: --url is required unless --clean is specified")
-        return 1
 
     config = load_config()
 
@@ -124,9 +213,9 @@ def main():
     print(f"Keep git repo: {args.keep_git}\n")
 
     try:
-        # Parse GitHub URL - no branch or commit args
+        # Parse GitHub URL
         github_info = parse_github_url(args.url)
-        print(f"Parsed GitHub URL info:")
+        print(f"\nParsed GitHub URL info:")
         print(f"Type: {github_info.type}")
         print(f"Owner: {github_info.owner}")
         print(f"Repo: {github_info.repo}")
@@ -136,14 +225,15 @@ def main():
         local_path = repo_handler.clone_repo()
         print(f"\nRepository cloned to: {local_path}")
 
-        # Get changed files
-        changed_files = repo_handler.get_changed_files()
-        if changed_files:
-            print("\nChanged files:")
-            for file in changed_files:
-                print(f"- {normalize_path(Path(file).relative_to(local_path))}")
+        # If analyzing Rust files, remove tests first
+        if '.rs' in config['extensions']:
+            print("\nRemoving Rust test files and inline tests...")
+            remove_tests_from_all_rust_files(local_path)
 
-        # Initialize file analyzer
+        # Get changed files without filtering
+        changed_files = repo_handler.get_changed_files()
+
+        # Initialize file analyzer with configuration
         analyzer = FileAnalyzer(
             local_path,
             config['extensions'],
@@ -151,44 +241,50 @@ def main():
             config['exclude']
         )
 
-        # Find primary files
-        primary_files = analyzer.find_primary_files(changed_files if github_info.type != 'repo' else None)
-        print(f"\nFound {len(primary_files)} primary files")
-        print("Primary files:")
-        for file in primary_files:
-            print(f"- {normalize_path(Path(file).relative_to(local_path))}")
-
-        # Generate primary files tree diagram
-        OutputGenerator.generate_tree_diagram(
-            primary_files,
-            Path(local_path),
-            Path('out') / 'files_primary.md'
+        # Find and filter primary files
+        primary_files = analyzer.find_primary_files(
+            changed_files if github_info.type != 'repo' else None
         )
+
+        if not primary_files:
+            print("\nNo files found matching the specified criteria.")
+            return 0
+
+        # First Analysis: Only Primary Files
+        print("\nAnalyzing primary files...")
+        primary_cloc_output = run_cloc(local_path, primary_files)
 
         # Find dependencies
         all_dependencies = analyzer.find_dependencies(primary_files)
-        print(f"\nFound {len(all_dependencies)} dependency files")
-        print("Dependency files:")
-        for file in all_dependencies:
-            print(f"- {normalize_path(Path(file).relative_to(local_path))}")
-
-        # Generate all files tree diagram
         all_files = sorted(list(set(primary_files + all_dependencies)))
-        OutputGenerator.generate_tree_diagram(
-            all_files,
-            Path(local_path),
-            Path('out') / 'metrics.md'
+
+        # Generate full analysis if there are dependencies
+        full_cloc_output = None
+        if all_dependencies:
+            print(f"\nFound {len(all_dependencies)} dependency files:")
+            for file in all_dependencies:
+                print(f"- {normalize_path(Path(file).relative_to(local_path))}")
+
+            print("\nAnalyzing all files including dependencies...")
+            full_cloc_output = run_cloc(local_path, all_files)
+
+        # Generate combined report
+        OutputGenerator.generate_combined_report(
+            primary_files=primary_files,
+            all_files=all_files,
+            base_path=Path(local_path),
+            output_file=Path('out') / 'analysis_report.md',
+            primary_cloc=primary_cloc_output,
+            full_cloc=full_cloc_output if full_cloc_output else primary_cloc_output
         )
 
-        # Run cloc analysis
-        print("\nRunning cloc analysis...")
-        cloc_output = run_cloc(local_path, all_files)
-        print("\nCloc Analysis Results:")
-        print(cloc_output)
+        # Print results to console
+        print("\nPrimary Files Analysis Results:")
+        print(primary_cloc_output)
 
-        # Save cloc output
-        with open(Path('out') / 'cloc_analysis.txt', 'w') as f:
-            f.write(cloc_output)
+        if full_cloc_output:
+            print("\nFull Analysis Results (including dependencies):")
+            print(full_cloc_output)
 
     except Exception as e:
         print(f"Error: {e}")
