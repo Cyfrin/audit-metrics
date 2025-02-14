@@ -42,6 +42,8 @@ def parse_arguments():
                        help='Keep the temporary git repository after analysis')
     parser.add_argument('--clean', action='store_true',
                        help='Clean all repositories in out/repos directory and exit')
+    parser.add_argument('--debug', action='store_true',
+                       help='Show debug messages')
 
     args = parser.parse_args()
     return args
@@ -170,7 +172,7 @@ def handle_test_removal(directory: str, is_remote: bool = False) -> None:
             print(f"Repo: {github_info.repo}")
 
             # Clone repository
-            repo_handler = GitRepoHandler(github_info)
+            repo_handler = GitRepoHandler(github_info, debug=args.debug)
             local_path = repo_handler.clone_repo()
             print(f"\nRepository cloned to: {local_path}")
 
@@ -231,9 +233,11 @@ def main():
         print(f"Type: {github_info.type}")
         print(f"Owner: {github_info.owner}")
         print(f"Repo: {github_info.repo}")
+        if github_info.type == 'commit':
+            print(f"Commit: {github_info.commit}")
 
         # Clone repository
-        repo_handler = GitRepoHandler(github_info)
+        repo_handler = GitRepoHandler(github_info, debug=args.debug)
         local_path = repo_handler.clone_repo()
         print(f"\nRepository cloned to: {local_path}")
 
@@ -250,12 +254,13 @@ def main():
             local_path,
             config['extensions'],
             config['include'],
-            config['exclude']
+            config['exclude'],
+            debug=args.debug
         )
 
         # Find and filter primary files
         primary_files = analyzer.find_primary_files(
-            changed_files if github_info.type != 'repo' else None
+            changed_files if github_info.type in ['commit', 'pr', 'comparison'] else None
         )
 
         if not primary_files:

@@ -127,26 +127,34 @@ def parse_github_url(url: str) -> GitHubInfo:
         branch = ref
         url = base_url
     elif '/commit/' in url:
-        base_url, ref = url.split('/commit/', 1)
-        if '/' in ref:
-            ref = ref.split('/')[0]
-        commit = ref
-        url = base_url
+        # Return commit type directly
+        parts = url.split('/commit/')
+        base_url = parts[0]
+        commit_hash = parts[1].split('/')[0]
+        owner, repo = base_url.split('/')[-2:]
+        return GitHubInfo(
+            type='commit',
+            owner=owner,
+            repo=repo,
+            commit=commit_hash
+        )
 
     parser = GitHubURLParser(url, branch, commit)
     return parser.parse()
 
 class GitRepoHandler:
-    def __init__(self, github_info: GitHubInfo):
+    def __init__(self, github_info: GitHubInfo, debug: bool = False):
         self.github_info = github_info
         self.repo = None
         self.workspace_dir = None
         self.temp_analysis_dir = None
+        self.debug = debug
 
         # Get GitHub token once during initialization
         self.github_token = os.getenv('GITHUB_TOKEN')
         if not self.github_token:
-            print("Debug: Environment variables:", {k: v for k, v in os.environ.items() if 'TOKEN' in k})
+            if self.debug:
+                print("Debug: Environment variables:", {k: v for k, v in os.environ.items() if 'TOKEN' in k})
             raise ValueError("GITHUB_TOKEN not found in environment variables")
 
     def _setup_workspace(self) -> Path:
@@ -402,26 +410,27 @@ class GitRepoHandler:
             # Get the parent commit
             commit = self.repo.commit(self.github_info.commit)
             parent = commit.parents[0] if commit.parents else None
-            
+
             if parent:
                 # Get diff between parent and commit
                 diff_str = self.repo.git.diff('--name-only', parent.hexsha, commit.hexsha)
             else:
                 # For initial commit, get all files in the commit
                 diff_str = self.repo.git.show('--name-only', '--pretty=format:', commit.hexsha)
-            
+
             changed_files = [
                 str(Path(self.workspace_dir) / f.strip())
                 for f in diff_str.split('\n')
                 if f.strip()
             ]
-            
-            print("\nChanged files in commit:")
-            for file in changed_files:
-                print(f"- {Path(file).relative_to(self.workspace_dir)}")
-            
+
+            if self.debug:
+                print("\nChanged files in commit:")
+                for file in changed_files:
+                    print(f"- {Path(file).relative_to(self.workspace_dir)}")
+
             return changed_files
-            
+
         except Exception as e:
             print(f"Error getting commit changed files: {e}")
             import traceback

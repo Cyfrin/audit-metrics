@@ -4,12 +4,13 @@ from typing import List, Set, Dict, Optional
 import re
 
 class FileAnalyzer:
-    def __init__(self, workspace_dir: str, extensions: List[str], include_patterns: List[str], exclude_patterns: List[str]):
+    def __init__(self, workspace_dir: str, extensions: List[str], include_patterns: List[str], exclude_patterns: List[str], debug: bool = False):
         # Ensure workspace_dir is absolute
         self.workspace_dir = Path(workspace_dir).absolute()
         self.extensions = extensions
         self.include_patterns = self._compile_patterns(include_patterns)
         self.exclude_patterns = self._compile_patterns(exclude_patterns)
+        self.debug = debug
 
     def _compile_patterns(self, patterns: List[str]) -> List[re.Pattern]:
         """Compile glob patterns to regex patterns"""
@@ -58,75 +59,86 @@ class FileAnalyzer:
         except ValueError:
             rel_path = str(file_path).replace('\\', '/')
 
-        print(f"\nChecking file: {rel_path}")
-        print(f"Extensions: {self.extensions}")
-        print(f"Include patterns: {[p.pattern for p in self.include_patterns]}")
-        print(f"Exclude patterns: {[p.pattern for p in self.exclude_patterns]}")
+        if self.debug:
+            print(f"\nChecking file: {rel_path}")
+            print(f"Extensions: {self.extensions}")
+            print(f"Include patterns: {[p.pattern for p in self.include_patterns]}")
+            print(f"Exclude patterns: {[p.pattern for p in self.exclude_patterns]}")
 
         # Check extensions
         if self.extensions and not any(str(file_path).lower().endswith(ext.lower()) for ext in self.extensions):
-            print(f"Excluding: {rel_path} - extension not in {self.extensions}")
+            if self.debug:
+                print(f"Excluding: {rel_path} - extension not in {self.extensions}")
             return False
 
         # Check excludes first - match against both relative and absolute paths
         for exclude_pattern in self.exclude_patterns:
             # Try matching against the relative path
             if exclude_pattern.search(rel_path):
-                print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern}")
+                if self.debug:
+                    print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern}")
                 return False
             # Try matching against the absolute path
             abs_path = str(file_path.absolute()).replace('\\', '/')
             if exclude_pattern.search(abs_path):
-                print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern} (absolute path)")
+                if self.debug:
+                    print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern} (absolute path)")
                 return False
 
         # For primary files, check include patterns only if they exist
         if hasattr(self, '_is_checking_primary') and self._is_checking_primary:
             if not self.include_patterns:
-                print(f"Including: {rel_path} - no include patterns specified")
+                if self.debug:
+                    print(f"Including: {rel_path} - no include patterns specified")
                 return True
             # Check includes only if patterns exist
             for pattern in self.include_patterns:
                 if pattern.search(rel_path):
-                    print(f"Including: {rel_path} - matches include pattern {pattern.pattern}")
+                    if self.debug:
+                        print(f"Including: {rel_path} - matches include pattern {pattern.pattern}")
                     return True
-            print(f"Excluding: {rel_path} - doesn't match any include patterns")
+            if self.debug:
+                print(f"Excluding: {rel_path} - doesn't match any include patterns")
             return False
 
         # For dependencies, include everything that's not excluded
-        print(f"Including: {rel_path} - dependency check")
+        if self.debug:
+            print(f"Including: {rel_path} - dependency check")
         return True
 
     def find_primary_files(self, changed_files: Optional[List[str]] = None) -> List[Path]:
         """Find all primary files to analyze"""
-        # Set flag for checking primary files
         self._is_checking_primary = True
         try:
-            # For commit URLs or other cases with changed_files, only analyze those files
             if changed_files:
-                print(f"\nChecking changed files: {changed_files}")
-                # Filter changed files
+                if self.debug:
+                    print(f"\nChecking changed files: {changed_files}")
                 primary_files = [
                     Path(f) for f in changed_files
                     if self._should_include_file(f)
                 ]
-                print(f"\nFound {len(primary_files)} changed files matching criteria:")
-                for file in primary_files:
-                    print(f"- {file.relative_to(self.workspace_dir)}")
+                if self.debug:
+                    print(f"\nFound {len(primary_files)} changed files matching criteria:")
+                    for file in primary_files:
+                        print(f"- {file.relative_to(self.workspace_dir)}")
                 return primary_files
             else:
-                print("\nScanning all files in workspace...")
+                if self.debug:
+                    print("\nScanning all files in workspace...")
                 # Get all files in workspace
                 all_files = []
                 for root, _, files in os.walk(self.workspace_dir):
                     for file in files:
                         file_path = Path(root) / file
-                        print(f"Checking file: {file_path}")
+                        if self.debug:
+                            print(f"Checking file: {file_path}")
                         if self._should_include_file(file_path):
-                            print(f"Including file: {file_path}")
+                            if self.debug:
+                                print(f"Including file: {file_path}")
                             all_files.append(file_path)
                         else:
-                            print(f"Excluding file: {file_path} - doesn't match criteria")
+                            if self.debug:
+                                print(f"Excluding file: {file_path} - doesn't match criteria")
                 primary_files = all_files
 
             print(f"\nFound {len(primary_files)} primary files:")
@@ -210,7 +222,8 @@ class FileAnalyzer:
                 # Split inherited contracts and clean up names
                 inherited_contracts = [c.strip() for c in inherited.split(',')]
 
-                print(f"Found contract {contract_name} inheriting from: {inherited_contracts}")
+                if self.debug:
+                    print(f"Found contract {contract_name} inheriting from: {inherited_contracts}")
 
                 # Try to resolve each inherited contract
                 for contract in inherited_contracts:
@@ -227,15 +240,17 @@ class FileAnalyzer:
                     for possible_path in possible_paths:
                         resolved_path = self._resolve_import_path(possible_path, file_path)
                         if resolved_path and resolved_path not in visited:
-                            print(f"Found dependency: {resolved_path}")
+                            if self.debug:
+                                print(f"Found dependency: {resolved_path}")
                             deps.add(resolved_path)
                             nested_deps = self._find_file_dependencies(resolved_path, visited, depth)
                             deps.update(nested_deps)
                             break  # Found the contract, stop trying other paths
                     else:
-                        print(f"Warning: Could not find contract file for {contract}")
+                        if self.debug:
+                            print(f"Warning: Could not find contract file for {contract}")
 
-            # Second: Find import statements
+            # Find import statements - only look for actual imports
             import_patterns = [
                 r'import\s+"([^"]+)"',  # Standard imports
                 r'import\s+{[^}]+}\s+from\s+"([^"]+)"',  # Named imports
@@ -249,15 +264,17 @@ class FileAnalyzer:
                     import_path = match.group(1)
                     resolved_path = self._resolve_import_path(import_path, file_path)
                     if resolved_path and resolved_path not in visited:
-                        print(f"Found import: {resolved_path}")
+                        if self.debug:
+                            print(f"Found import: {resolved_path}")
                         deps.add(resolved_path)
                         nested_deps = self._find_file_dependencies(resolved_path, visited, depth)
                         deps.update(nested_deps)
 
         except Exception as e:
-            print(f"Error processing Solidity imports in {file_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            if self.debug:
+                print(f"Error processing Solidity imports in {file_path}: {e}")
+                import traceback
+                traceback.print_exc()
 
         return deps
 
