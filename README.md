@@ -49,7 +49,7 @@ EXCLUDE=test/,tests/,mock/,.t.sol,Test.sol,Mock.sol,script/,forge-std/,solmate/
 Run the tool with a GitHub URL:
 
 ```bash
-python src/main.py --url <github-url>
+python main.py --url <github-url>
 ```
 
 ### Removing Tests
@@ -57,13 +57,13 @@ python src/main.py --url <github-url>
 For local directory:
 
 ```bash
-python src/main.py --remove-tests [--dir <directory>]
+python main.py --remove-tests [--dir <directory>]
 ```
 
 For remote repository:
 
 ```bash
-python src/main.py --remove-tests --url <github-url>
+python main.py --remove-tests --url <github-url>
 ```
 
 The URL can be:
@@ -73,9 +73,13 @@ The URL can be:
 
 Example:
 ```bash
-python src/main.py --url https://github.com/Cyfrin/cyfrin-attester
-python src/main.py --url https://github.com/Cyfrin/cyfrin-attester/pull/2
-python src/main.py --url https://github.com/Cyfrin/cyfrin-attester/compare/d8e18d59e82945e1382601866ce09784c01c0eb3...8d382f585b377de0c00f6bc489f637ab43be5550
+python main.py --url https://github.com/Cyfrin/cyfrin-attester
+python main.py --url https://github.com/Cyfrin/cyfrin-attester/pull/2
+python main.py --url https://github.com/Cyfrin/cyfrin-attester/compare/f4c5cb59c4962162fe45e502f5d3d9bc1b2f36d3...08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/audit-2025-01-liberada/tree/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/commit/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/audit-2025-01-liberada
+python main.py --remove-test --url https://github.com/Cyfrin/audit-2025-01-liberada
 ```
 
 ### Test Removal
@@ -111,7 +115,7 @@ The tool generates output in the `out` directory:
 ## Example
 
 ```bash
-python src/main.py --url https://github.com/owner/repo/pull/123
+python main.py --url https://github.com/owner/repo/pull/123
 ```
 
 Sample output:
@@ -149,3 +153,24 @@ Common issues:
 1. `GITHUB_TOKEN not found`: Ensure you have created a `.env` file with your GitHub token
 2. `cloc: command not found`: Install CLOC using your package manager
 3. Clone errors: Check your GitHub token has sufficient permissions
+
+## Directory Structure
+
+```
+audit-metrics/
+├── .env
+├── .env.example
+├── README.md
+├── requirements.txt
+├── main.py
+├── git_handler.py
+├── file_analyzer.py
+├── output_generator.py
+├── remove_rust_t.py
+├── utils.py
+└── out/
+    ├── analysis_report.md
+    ├── files_to_analyze.txt
+    ├── cloc_with_deps.txt
+    └── cloc_primary.txt
+```
