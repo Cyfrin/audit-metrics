@@ -58,7 +58,7 @@ def clean_repositories():
         print("No audit-metrics directory found to clean")
 
 def load_config():
-    load_dotenv()
+    load_dotenv(override=True)
     github_token = os.getenv('GITHUB_TOKEN')
     if not github_token:
         raise ValueError("GITHUB_TOKEN is required in .env file")
