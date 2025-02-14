@@ -80,19 +80,19 @@ python main.py --url https://github.com/Cyfrin/cyfrin-attester
 python main.py --url https://github.com/Cyfrin/cyfrin-attester/pull/2
 
 # commit comparison
-python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/compare/f4c5cb59c4962162fe45e502f5d3d9bc1b2f36d3...08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/chainlink-gmx-automation/compare/f64416650341d1262cc63ccf4e4aff114c98d922...9f7f875fe034e4c430b64933e316831b5b5077fe
 
 # full repository at a specific commit
-python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/tree/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/chainlink-gmx-automation/tree/d8603d2654513f57eb0471239966449d7f693426
 
 # changes in single commit
-python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/commit/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+python main.py --url https://github.com/Cyfrin/chainlink-gmx-automation/commit/d8603d2654513f57eb0471239966449d7f693426
 
 # rust repository
-python main.py --url https://github.com/Cyfrin/audit-2025-01-liberada
+python main.py --url https://github.com/Cyfrin/aderyn
 
 # clone rust repo and remove tests on local
-python main.py --remove-test --url https://github.com/Cyfrin/audit-2025-01-liberada
+python main.py --remove-test --url https://github.com/Cyfrin/aderyn
 ```
 
 ### Test Removal
