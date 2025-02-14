@@ -71,14 +71,27 @@ The URL can be:
 - Pull Request URL: `https://github.com/owner/repo/pull/123`
 - Commit comparison URL: `https://github.com/owner/repo/compare/commit1...commit2`
 
-Example:
+Usage Examples:
 ```bash
+# full repository
 python main.py --url https://github.com/Cyfrin/cyfrin-attester
+
+# pull request
 python main.py --url https://github.com/Cyfrin/cyfrin-attester/pull/2
-python main.py --url https://github.com/Cyfrin/cyfrin-attester/compare/f4c5cb59c4962162fe45e502f5d3d9bc1b2f36d3...08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
-python main.py --url https://github.com/Cyfrin/audit-2025-01-liberada/tree/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+
+# commit comparison
+python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/compare/f4c5cb59c4962162fe45e502f5d3d9bc1b2f36d3...08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+
+# full repository at a specific commit
+python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/tree/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+
+# changes in single commit
 python main.py --url https://github.com/Cyfrin/audit-2025-01-libre-platform-contracts/commit/08ebaed7c61dc256b1d86ea52ef23ddecb0d04a0
+
+# rust repository
 python main.py --url https://github.com/Cyfrin/audit-2025-01-liberada
+
+# clone rust repo and remove tests on local
 python main.py --remove-test --url https://github.com/Cyfrin/audit-2025-01-liberada
 ```
 

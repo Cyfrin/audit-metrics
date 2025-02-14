@@ -295,9 +295,26 @@ class GitRepoHandler:
             print(f"Base commit: {base_commit}")
             print(f"Head commit: {head_commit}")
 
-            # Fetch the specific commits
-            self.repo.remote().fetch(base_commit)
-            self.repo.remote().fetch(head_commit)
+            # Fetch all history first
+            print("Fetching repository history...")
+            try:
+                # Try to unshallow first
+                self.repo.git.fetch('--unshallow')
+            except git.GitCommandError:
+                print("Repository is already unshallow or cannot be unshallowed")
+
+            # Fetch all refs
+            self.repo.git.fetch('--tags', '--prune', '--all')
+
+            # Try to find the commits
+            try:
+                self.repo.commit(base_commit)
+                self.repo.commit(head_commit)
+            except Exception as e:
+                print(f"Error finding commits: {e}")
+                print("Trying to fetch specific commits...")
+                # If not found, try fetching specific commits
+                self.repo.git.fetch('origin', f'+refs/heads/*:refs/remotes/origin/*')
 
             # Checkout head commit
             self.repo.git.checkout(head_commit)
