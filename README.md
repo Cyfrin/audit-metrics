@@ -1,7 +1,7 @@
 # Audit Metrics Tool
 
-A Python-based tool for analyzing GitHub repositories, pull requests, and commit comparisons.
-It helps identify and analyze source files and their dependencies, generating metrics and visualizations useful for code audits.
+Audit Metrics Tool is a Python-based utility designed to analyze GitHub repositories, pull requests, and commit comparisons.  
+It identifies primary source files, analyzes their dependencies, and generates actionable metrics, making it an essential tool for code audits, dependency tracking, and repository analysis.
 
 ## Features
 
@@ -12,7 +12,6 @@ It helps identify and analyze source files and their dependencies, generating me
 - Configurable file extensions, include/exclude patterns
 - Supports custom filtering of files and dependencies
 - Automatic test removal for Rust codebases
-- Supports both local and remote repositories
 
 ## Prerequisites
 
@@ -52,7 +51,16 @@ Run the tool with a GitHub URL:
 python main.py --url <github-url>
 ```
 
-### Removing Tests
+### Test Removal
+
+The tool can remove test files and inline tests from Rust files. This includes:
+- Removing files with 'test' in their name
+- Removing inline test modules marked with #[cfg(test)] or #[test]
+- Excluding test-only code blocks
+
+You can use the --remove-tests flag to:
+- Clean tests from a local directory
+- Clone and clean tests from a remote repository
 
 For local directory:
 
@@ -66,12 +74,13 @@ For remote repository:
 python main.py --remove-tests --url <github-url>
 ```
 
+### Usage Examples
+
 The URL can be:
 - Repository URL: `https://github.com/owner/repo`
 - Pull Request URL: `https://github.com/owner/repo/pull/123`
 - Commit comparison URL: `https://github.com/owner/repo/compare/commit1...commit2`
 
-Usage Examples:
 ```bash
 # full repository
 python main.py --url https://github.com/Cyfrin/cyfrin-attester
@@ -95,17 +104,6 @@ python main.py --url https://github.com/Cyfrin/aderyn
 python main.py --remove-test --url https://github.com/Cyfrin/aderyn
 ```
 
-### Test Removal
-
-The tool can remove test files and inline tests from Rust files. This includes:
-- Removing files with 'test' in their name
-- Removing inline test modules marked with #[cfg(test)] or #[test]
-- Excluding test-only code blocks
-
-You can use the --remove-tests flag to:
-- Clean tests from a local directory
-- Clone and clean tests from a remote repository
-
 ## Configuration
 
 Configure the tool through environment variables in `.env`:
@@ -125,28 +123,6 @@ The tool generates output in the `out` directory:
   - CLOC analysis results
   - Total files and nSLOC counts
 
-## Example
-
-```bash
-python main.py --url https://github.com/owner/repo/pull/123
-```
-
-Sample output:
-```
-Configuration:
-Extensions: ['.rs']
-Include patterns: []
-Exclude patterns: ['test/', 'mock/', '.t.sol']
-
-Parsed GitHub URL info:
-Type: pull
-Owner: owner
-Repo: repo
-
-Repository cloned to: /tmp/repo
-...
-```
-
 ## Contributing
 
 1. Fork the repository
@@ -154,36 +130,3 @@ Repository cloned to: /tmp/repo
 3. Commit your changes
 4. Push to the branch
 5. Create a new Pull Request
-
-## License
-
-[Insert your license here]
-
-## Troubleshooting
-
-Common issues:
-
-1. `GITHUB_TOKEN not found`: Ensure you have created a `.env` file with your GitHub token
-2. `cloc: command not found`: Install CLOC using your package manager
-3. Clone errors: Check your GitHub token has sufficient permissions
-
-## Directory Structure
-
-```
-audit-metrics/
-├── .env
-├── .env.example
-├── README.md
-├── requirements.txt
-├── main.py
-├── git_handler.py
-├── file_analyzer.py
-├── output_generator.py
-├── remove_rust_t.py
-├── utils.py
-└── out/
-    ├── analysis_report.md
-    ├── files_to_analyze.txt
-    ├── cloc_with_deps.txt
-    └── cloc_primary.txt
-```
