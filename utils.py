@@ -11,8 +11,9 @@ def run_cloc(files: List[Path]) -> Dict[str, int]:
         # Run cloc directly on each file and parse the output
         file_stats = {}
         for file_path in files:
-            # Ensure file_path is absolute
-            abs_path = file_path if file_path.is_absolute() else file_path.absolute()
+            # Ensure file_path is absolute and resolved
+            abs_path = Path(file_path).resolve()
+
             result = subprocess.run(
                 ['cloc', '--json', str(abs_path)],
                 capture_output=True,

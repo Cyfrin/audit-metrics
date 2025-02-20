@@ -50,39 +50,69 @@ class FileAnalyzer:
 
         return [re.compile(glob_to_regex(p)) for p in patterns if p.strip()]
 
+    def _normalize_path(self, path: Path | str) -> str:
+        """Normalize path to handle platform differences and macOS /private prefix"""
+        if isinstance(path, str):
+            path = Path(path)
+
+        # Resolve the path to handle symlinks
+        resolved = path.resolve()
+
+        # Convert to string and normalize separators
+        normalized = str(resolved).replace('\\', '/')
+
+        # Handle macOS /private prefix
+        if normalized.startswith('/private/'):
+            normalized = normalized[8:]  # Remove '/private' prefix
+
+        return normalized
+
     def _should_include_file(self, file_path: str | Path) -> bool:
         """Determine if a file should be included in analysis"""
-        file_path = Path(file_path)
-        # Normalize path to use forward slashes
-        try:
-            rel_path = str(file_path.relative_to(self.workspace_dir)).replace('\\', '/')
-        except ValueError:
-            rel_path = str(file_path).replace('\\', '/')
+        # Normalize both paths
+        workspace_path = self._normalize_path(self.workspace_dir)
+        file_path_norm = self._normalize_path(file_path)
+
+        # Get relative path
+        if file_path_norm.startswith(workspace_path):
+            rel_path = file_path_norm[len(workspace_path):].lstrip('/')
+        else:
+            # Try to find common temp directory parts
+            ws_parts = workspace_path.split('/')
+            file_parts = file_path_norm.split('/')
+
+            # Find common elements after tmp/Temp
+            common_idx = -1
+            for i, (wp, fp) in enumerate(zip(ws_parts, file_parts)):
+                if wp == fp and wp in ['tmp', 'Temp', 'var']:
+                    common_idx = i
+                    break
+
+            if common_idx >= 0:
+                # Get the path after the common point
+                rel_path = '/'.join(file_parts[common_idx+1:])
+            else:
+                rel_path = file_path_norm
 
         if self.debug:
             print(f"\nChecking file: {rel_path}")
+            print(f"Workspace path: {workspace_path}")
+            print(f"File path: {file_path_norm}")
             print(f"Extensions: {self.extensions}")
             print(f"Include patterns: {[p.pattern for p in self.include_patterns]}")
             print(f"Exclude patterns: {[p.pattern for p in self.exclude_patterns]}")
 
         # Check extensions
-        if self.extensions and not any(str(file_path).lower().endswith(ext.lower()) for ext in self.extensions):
+        if self.extensions and not any(file_path_norm.lower().endswith(ext.lower()) for ext in self.extensions):
             if self.debug:
                 print(f"Excluding: {rel_path} - extension not in {self.extensions}")
             return False
 
-        # Check excludes first - match against both relative and absolute paths
+        # Check excludes first
         for exclude_pattern in self.exclude_patterns:
-            # Try matching against the relative path
             if exclude_pattern.search(rel_path):
                 if self.debug:
                     print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern}")
-                return False
-            # Try matching against the absolute path
-            abs_path = str(file_path.absolute()).replace('\\', '/')
-            if exclude_pattern.search(abs_path):
-                if self.debug:
-                    print(f"Excluding: {rel_path} - matches exclude pattern {exclude_pattern.pattern} (absolute path)")
                 return False
 
         # For primary files, check include patterns only if they exist
@@ -369,44 +399,57 @@ class FileAnalyzer:
     def _resolve_import_path(self, import_path: str, current_file: Path) -> Optional[Path]:
         """Resolve relative import paths to absolute paths"""
         try:
+            # Normalize paths
+            workspace_dir_norm = self._normalize_path(self.workspace_dir)
+            current_file_norm = self._normalize_path(current_file)
+            import_path = import_path.replace('\\', '/')
+
             # Handle different import path styles
             if import_path.startswith('./') or import_path.startswith('../'):
                 # Relative import
-                resolved = (current_file.parent / import_path).resolve()
+                resolved = Path(current_file_norm).parent / import_path
             else:
                 # Try multiple base paths for absolute imports
                 possible_paths = [
-                    self.workspace_dir / import_path,  # Direct from workspace root
-                    self.workspace_dir / 'src' / import_path,  # From src directory
-                    self.workspace_dir / 'contracts' / import_path,  # From contracts directory
-                    self.workspace_dir / 'interfaces' / import_path,  # From interfaces directory
-                    self.workspace_dir / 'lib' / import_path,  # From lib directory
-                    current_file.parent / import_path,  # From current directory
-                    current_file.parent / '..' / import_path,  # From parent directory
-                    current_file.parent / 'interfaces' / import_path,  # From local interfaces
-                    current_file.parent / 'libraries' / import_path,  # From local libraries
+                    Path(workspace_dir_norm) / import_path,  # Direct from workspace root
+                    Path(workspace_dir_norm) / 'src' / import_path,  # From src directory
+                    Path(workspace_dir_norm) / 'contracts' / import_path,  # From contracts directory
+                    Path(workspace_dir_norm) / 'interfaces' / import_path,  # From interfaces directory
+                    Path(workspace_dir_norm) / 'lib' / import_path,  # From lib directory
+                    Path(current_file_norm).parent / import_path,  # From current directory
+                    Path(current_file_norm).parent / '..' / import_path,  # From parent directory
+                    Path(current_file_norm).parent / 'interfaces' / import_path,  # From local interfaces
+                    Path(current_file_norm).parent / 'libraries' / import_path,  # From local libraries
                     # Try without file extension
-                    self.workspace_dir / import_path.replace('.sol', '') / f"{import_path.split('/')[-1]}",
+                    Path(workspace_dir_norm) / import_path.replace('.sol', '') / f"{import_path.split('/')[-1]}",
                 ]
 
                 for path in possible_paths:
-                    if path.exists() and path.is_file():
-                        return path
-                    # Try with .sol extension if not already present
-                    if not str(path).endswith('.sol'):
-                        path_with_ext = path.with_suffix('.sol')
-                        if path_with_ext.exists() and path_with_ext.is_file():
-                            return path_with_ext
+                    try:
+                        normalized_path = self._normalize_path(path)
+                        if Path(normalized_path).exists() and Path(normalized_path).is_file():
+                            return Path(normalized_path)
+                        # Try with .sol extension if not already present
+                        if not normalized_path.endswith('.sol'):
+                            path_with_ext = Path(normalized_path + '.sol')
+                            if path_with_ext.exists() and path_with_ext.is_file():
+                                return path_with_ext
+                    except Exception:
+                        continue
 
             # Check if the resolved path exists
-            if 'resolved' in locals() and resolved.exists() and resolved.is_file():
-                return resolved
-
-            # Try adding .sol extension if it doesn't exist
-            if 'resolved' in locals() and not str(resolved).endswith('.sol'):
-                resolved_with_ext = resolved.with_suffix('.sol')
-                if resolved_with_ext.exists() and resolved_with_ext.is_file():
-                    return resolved_with_ext
+            if 'resolved' in locals():
+                try:
+                    normalized_resolved = self._normalize_path(resolved)
+                    if Path(normalized_resolved).exists() and Path(normalized_resolved).is_file():
+                        return Path(normalized_resolved)
+                    # Try adding .sol extension if it doesn't exist
+                    if not normalized_resolved.endswith('.sol'):
+                        resolved_with_ext = Path(normalized_resolved + '.sol')
+                        if resolved_with_ext.exists() and resolved_with_ext.is_file():
+                            return resolved_with_ext
+                except Exception:
+                    pass
 
         except Exception as e:
             print(f"Error resolving import path {import_path}: {e}")
