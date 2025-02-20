@@ -277,6 +277,8 @@ def main():
 
         # Generate full analysis if there are dependencies
         full_cloc_output = None
+        change_analysis = None
+
         if all_dependencies:
             print(f"\nFound {len(all_dependencies)} dependency files:")
             for file in all_dependencies:
@@ -285,6 +287,19 @@ def main():
             print("\nAnalyzing all files including dependencies...")
             full_cloc_output = run_cloc(local_path, all_files)
 
+        # Get change analysis for PRs, commits, or comparisons
+        if github_info.type == 'pr':
+            print("\nAnalyzing PR changes...")
+            change_analysis = repo_handler.analyze_pr_changes()
+        elif github_info.type == 'commit':
+            print("\nAnalyzing commit changes...")
+            change_analysis = repo_handler.analyze_commit_changes()
+        elif github_info.type == 'comparison':
+            print("\nAnalyzing comparison changes...")
+            change_analysis = repo_handler.analyze_comparison_changes()
+        else:
+            change_analysis = None
+
         # Generate combined report
         OutputGenerator.generate_combined_report(
             primary_files=primary_files,
@@ -292,7 +307,8 @@ def main():
             base_path=Path(local_path),
             output_file=Path('out') / 'analysis_report.md',
             primary_cloc=primary_cloc_output,
-            full_cloc=full_cloc_output if full_cloc_output else primary_cloc_output
+            full_cloc=full_cloc_output if full_cloc_output else primary_cloc_output,
+            change_analysis=change_analysis
         )
 
         # Print results to console

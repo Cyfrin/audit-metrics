@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 import tempfile
 from remove_rust_t import remove_tests_from_all_rust_files
+import subprocess
+from typing import Dict, List, Tuple
 
 @dataclass
 class GitHubInfo:
@@ -323,6 +325,61 @@ class GitRepoHandler:
             print(f"Error during comparison fetch: {e}")
             raise
 
+    def _should_include_file(self, file_path: str) -> bool:
+        """Check if a file should be included based on extensions and exclude patterns"""
+        # Get configured extensions and exclude patterns from environment
+        extensions = os.getenv('EXTENSIONS', '').strip().split(',')
+        extensions = [ext.strip() for ext in extensions if ext.strip()]
+
+        excludes = os.getenv('EXCLUDE', '').strip().split(',')
+        excludes = [p.strip() for p in excludes if p.strip()]
+
+        # Normalize the file path
+        file_path = file_path.replace('\\', '/')
+
+        # Check exclude patterns first
+        for pattern in excludes:
+            # Convert glob pattern to regex pattern
+            pattern = pattern.replace('\\', '/')
+            
+            # Convert glob pattern to regex
+            regex_pattern = pattern
+            # Escape special regex characters except * and ?
+            regex_pattern = re.escape(regex_pattern).replace('\\*', '[^/]*').replace('\\?', '[^/]')
+            
+            # Handle directory patterns
+            if '/' in regex_pattern:
+                # If pattern starts with /, anchor to start
+                if regex_pattern.startswith('/'):
+                    regex_pattern = '^' + regex_pattern
+                # If pattern ends with /, match directory
+                if regex_pattern.endswith('/'):
+                    regex_pattern = regex_pattern + '.*'
+                # If pattern is */dir/*, match any path containing /dir/
+                if regex_pattern.startswith('[^/]*/'):
+                    regex_pattern = '.*/' + regex_pattern[6:]
+                # Otherwise, match pattern anywhere in path
+                if not regex_pattern.startswith('^') and not regex_pattern.startswith('.*'):
+                    regex_pattern = '.*' + regex_pattern
+                if not regex_pattern.endswith('.*'):
+                    regex_pattern = regex_pattern + '(?:/.*)?$'
+            else:
+                # For simple patterns, match at end of path components
+                regex_pattern = f'.*?{regex_pattern}$'
+
+            if self.debug:
+                print(f"Pattern '{pattern}' converted to regex '{regex_pattern}'")
+                print(f"Testing '{file_path}' against regex '{regex_pattern}': {bool(re.search(regex_pattern, file_path, re.IGNORECASE))}")
+
+            if re.search(regex_pattern, file_path, re.IGNORECASE):
+                return False
+
+        # Check extensions
+        if extensions and not any(file_path.lower().endswith(ext.lower()) for ext in extensions):
+            return False
+
+        return True
+
     def _get_comparison_changed_files(self) -> list[str]:
         """Get files changed between the comparison commits"""
         try:
@@ -336,7 +393,7 @@ class GitRepoHandler:
             changed_files = [
                 str(Path(self.workspace_dir) / f.strip())
                 for f in diff_str.split('\n')
-                if f.strip()
+                if f.strip() and self._should_include_file(f.strip())
             ]
 
             print("\nChanged files in comparison:")
@@ -395,7 +452,7 @@ class GitRepoHandler:
             return [
                 str(Path(self.workspace_dir) / f.strip())
                 for f in diff_str.split('\n')
-                if f.strip()
+                if f.strip() and self._should_include_file(f.strip())
             ]
 
         except Exception as e:
@@ -438,7 +495,7 @@ class GitRepoHandler:
             changed_files = [
                 str(Path(self.workspace_dir) / f.strip())
                 for f in diff_str.split('\n')
-                if f.strip()
+                if f.strip() and self._should_include_file(f.strip())
             ]
 
             if self.debug:
@@ -457,7 +514,7 @@ class GitRepoHandler:
     def prepare_workspace(self) -> str:
         """Prepare workspace for analysis, including test removal"""
         # Clone the repository first
-        self._clone_repository()
+        self.clone_repo()
 
         # Create a temporary directory for analysis
         self.temp_analysis_dir = tempfile.mkdtemp()
@@ -465,9 +522,16 @@ class GitRepoHandler:
         # Copy repository contents to temporary directory
         shutil.copytree(self.workspace_dir, self.temp_analysis_dir, dirs_exist_ok=True)
 
-        # Remove tests from the temporary directory
-        print("Removing test files and inline tests for accurate analysis...")
-        remove_tests_from_all_rust_files(self.temp_analysis_dir)
+        # Get configured extensions from environment
+        extensions = os.getenv('EXTENSIONS', '').strip().split(',')
+        extensions = [ext.strip() for ext in extensions if ext.strip()]
+
+        # Only remove Rust tests if .rs is in the extensions
+        if '.rs' in extensions:
+            print("Removing Rust test files and inline tests for accurate analysis...")
+            remove_tests_from_all_rust_files(self.temp_analysis_dir)
+        else:
+            print("Skipping Rust test removal as no Rust files are being analyzed...")
 
         return self.temp_analysis_dir
 
@@ -541,6 +605,125 @@ class GitRepoHandler:
                     os.system(f'rd /s /q "{self.temp_analysis_dir}"')
                 if self.workspace_dir:
                     os.system(f'rd /s /q "{self.workspace_dir}"')
+
+    def analyze_pr_changes(self) -> Dict:
+        """Analyze changes in the PR"""
+        try:
+            # Get PR information
+            pr_info = self._get_pr_info()
+            base_commit = pr_info['base']['sha']
+            head_commit = pr_info['head']['sha']
+
+            # Get the git diff with line counts
+            cmd = ['git', '-C', str(self.workspace_dir), 'diff', '--numstat', base_commit, head_commit]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error getting git diff: {result.stderr}")
+                return {}
+
+            return self._process_change_analysis(result.stdout)
+
+        except Exception as e:
+            print(f"Error analyzing PR changes: {e}")
+            return {}
+
+    def analyze_commit_changes(self) -> Dict:
+        """Analyze changes in a single commit"""
+        try:
+            # Get the commit and its parent
+            commit = self.repo.commit(self.github_info.commit)
+            parent = commit.parents[0] if commit.parents else None
+
+            if not parent:
+                # For initial commit, count all files as additions
+                cmd = ['git', '-C', str(self.workspace_dir), 'show', '--numstat', '--pretty=format:', commit.hexsha]
+            else:
+                # Get diff between parent and commit
+                cmd = ['git', '-C', str(self.workspace_dir), 'diff', '--numstat', parent.hexsha, commit.hexsha]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error getting git diff: {result.stderr}")
+                return {}
+
+            return self._process_change_analysis(result.stdout)
+
+        except Exception as e:
+            print(f"Error analyzing commit changes: {e}")
+            return {}
+
+    def analyze_comparison_changes(self) -> Dict:
+        """Analyze changes between two commits in a comparison"""
+        try:
+            # Clean up commit hashes
+            base_commit = self.github_info.base_commit.strip("'\"")
+            head_commit = self.github_info.head_commit.strip("'\"")
+
+            # Get the git diff with line counts
+            cmd = ['git', '-C', str(self.workspace_dir), 'diff', '--numstat', base_commit, head_commit]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error getting git diff: {result.stderr}")
+                return {}
+
+            return self._process_change_analysis(result.stdout)
+
+        except Exception as e:
+            print(f"Error analyzing comparison changes: {e}")
+            return {}
+
+    def _process_change_analysis(self, diff_output: str) -> Dict:
+        """Process git diff --numstat output and return change analysis"""
+        changes = {
+            'files_changed': 0,
+            'additions': 0,
+            'deletions': 0,
+            'file_details': {}
+        }
+
+        # Parse the diff output
+        # Format: <additions>\t<deletions>\t<file>
+        for line in diff_output.splitlines():
+            if not line.strip():
+                continue
+
+            parts = line.split('\t')
+            if len(parts) != 3:
+                continue
+
+            additions, deletions, file_path = parts
+
+            # Skip binary files (marked with - in git diff --numstat)
+            if additions == '-' or deletions == '-':
+                continue
+
+            # Use the file path as is for exclude pattern matching
+            # This ensures patterns like */test/* work correctly
+            if not self._should_include_file(file_path):
+                if self.debug:
+                    print(f"Excluding file from analysis: {file_path}")
+                continue
+
+            # Check if file exists in workspace
+            full_path = Path(self.workspace_dir) / file_path
+            if not full_path.exists():
+                if self.debug:
+                    print(f"Skipping non-existent file: {file_path}")
+                continue
+
+            changes['files_changed'] += 1
+            changes['additions'] += int(additions)
+            changes['deletions'] += int(deletions)
+            changes['file_details'][file_path] = {
+                'additions': int(additions),
+                'deletions': int(deletions),
+                'total_changes': int(additions) + int(deletions)
+            }
+
+        return changes
 
 def clone_repository(github_info: GitHubInfo) -> str:
     """Helper function to clone a repository"""

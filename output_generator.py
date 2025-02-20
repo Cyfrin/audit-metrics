@@ -9,7 +9,7 @@ class OutputGenerator:
         try:
             # Convert paths to relative paths and sort
             rel_paths = sorted([str(Path(f).relative_to(base_path)) for f in files])
-            
+
             # Generate markdown
             lines = []
             if title:
@@ -20,7 +20,7 @@ class OutputGenerator:
             for path in rel_paths:
                 lines.append(f"- {path}")
             lines.append("\n### File Tree:\n")
-            
+
             # Create tree structure
             tree = {}
             for path in rel_paths:
@@ -41,7 +41,7 @@ class OutputGenerator:
                         write_tree(subtree, prefix + ('    ' if is_last else '│   '))
 
             write_tree(tree)
-            
+
             # Write to file
             with open(output_file, 'a' if title else 'w') as f:
                 f.write('\n'.join(lines) + '\n\n')
@@ -50,9 +50,10 @@ class OutputGenerator:
             print(f"Error generating tree diagram: {e}")
 
     @staticmethod
-    def generate_combined_report(primary_files: List[Path], all_files: List[Path], 
+    def generate_combined_report(primary_files: List[Path], all_files: List[Path],
                                base_path: Path, output_file: Path,
-                               primary_cloc: str, full_cloc: str) -> None:
+                               primary_cloc: str, full_cloc: str,
+                               change_analysis: Dict = None) -> None:
         """Generate a combined report with both primary and full analysis"""
         output_file.parent.mkdir(exist_ok=True)
 
@@ -69,7 +70,7 @@ class OutputGenerator:
 
         # Get statistics
         primary_files_count, primary_nsloc = extract_cloc_summary(primary_cloc)
-        
+
         # Generate report
         report = [
             "# Code Analysis Report\n",
@@ -86,7 +87,7 @@ class OutputGenerator:
         if len(all_files) > len(primary_files):
             total_files_count, total_nsloc = extract_cloc_summary(full_cloc)
             dependency_files = sorted(set(all_files) - set(primary_files))
-            
+
             report.extend([
                 f"\n## Full Analysis ({total_files_count} files, {total_nsloc} nSLOC)\n",
                 "### Additional Dependencies:",
@@ -96,6 +97,35 @@ class OutputGenerator:
                 full_cloc.strip(),
                 "```"
             ])
+
+        # Add change analysis if available
+        if change_analysis:
+            report.extend([
+                "\n## Change Analysis\n",
+                f"Total Files Changed: {change_analysis['files_changed']}",
+                f"Total Additions: {change_analysis['additions']}",
+                f"Total Deletions: {change_analysis['deletions']}",
+                "\n### Changed Files\n",
+                "| File | Additions | Deletions | Total Changes |",
+                "|------|-----------|-----------|---------------|"
+            ])
+
+            # Sort files by total changes
+            sorted_files = sorted(
+                change_analysis['file_details'].items(),
+                key=lambda x: x[1]['total_changes'],
+                reverse=True
+            )
+
+            for file_path, changes in sorted_files:
+                # Clean up the file path for display
+                display_path = str(Path(file_path)).replace(str(base_path), '').lstrip('/')
+                if not display_path:
+                    display_path = file_path
+                
+                report.append(
+                    f"| {display_path} | {changes['additions']} | {changes['deletions']} | {changes['total_changes']} |"
+                )
 
         # Write report
         output_file.write_text('\n'.join(report))

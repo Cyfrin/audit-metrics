@@ -1,6 +1,6 @@
 # Audit Metrics Tool
 
-Audit Metrics Tool is a Python-based utility designed to analyze GitHub repositories, pull requests, and commit comparisons.  
+Audit Metrics Tool is a Python-based utility designed to analyze GitHub repositories, pull requests, and commit comparisons.
 It identifies primary source files, analyzes their dependencies, and generates actionable metrics, making it an essential tool for code audits, dependency tracking, and repository analysis.
 
 ## Features
@@ -9,9 +9,10 @@ It identifies primary source files, analyzes their dependencies, and generates a
 - Identifies primary source files and their dependencies
 - Generates tree diagrams of file structures
 - Produces code metrics using CLOC (Count Lines of Code)
-- Configurable file extensions, include/exclude patterns
+- Advanced pattern matching for file inclusion/exclusion
 - Supports custom filtering of files and dependencies
 - Automatic test removal for Rust codebases
+- Detailed change analysis for PRs, commits, and commit comparisons
 
 ## Prerequisites
 
@@ -38,7 +39,7 @@ pip install -r requirements.txt
 GITHUB_TOKEN=your_github_token_here
 EXTENSIONS=.sol,.rs
 INCLUDE=
-EXCLUDE=test/,tests/,mock/,.t.sol,Test.sol,Mock.sol,script/,forge-std/,solmate/
+EXCLUDE=*/test/*,test/*,.t.sol,Test.sol,Mock.sol,*/mock/*,forge-std/*,*/script/*
 ```
 
 ## Usage
@@ -50,6 +51,28 @@ Run the tool with a GitHub URL:
 ```bash
 python main.py --url <github-url>
 ```
+
+For pull requests, commits, and commit comparisons, the tool performs a detailed change analysis that includes:
+- Total number of files changed
+- Number of additions and deletions
+- Per-file change statistics
+- Filtered changes based on configured patterns
+
+### Pattern Matching
+
+The tool supports advanced pattern matching for file inclusion/exclusion:
+
+- Directory patterns:
+  - `*/test/*` matches any file in a test directory at any depth
+  - `test/*` matches files directly under the test directory
+  - `*/mock/*` matches any file in a mock directory at any depth
+
+- File patterns:
+  - `*.t.sol` matches test files with .t.sol extension
+  - `Test.sol` matches files named Test.sol
+  - `Mock.sol` matches files named Mock.sol
+
+Patterns are case-insensitive and support both forward and backward slashes.
 
 ### Test Removal
 
@@ -111,7 +134,7 @@ Configure the tool through environment variables in `.env`:
 - `GITHUB_TOKEN`: Your GitHub Personal Access Token (required)
 - `EXTENSIONS`: Comma-separated list of file extensions to analyze (e.g., `.sol,.rs`)
 - `INCLUDE`: Comma-separated list of patterns to include
-- `EXCLUDE`: Comma-separated list of patterns to exclude
+- `EXCLUDE`: Comma-separated list of patterns to exclude (supports advanced pattern matching)
 
 ## Output
 
@@ -122,6 +145,10 @@ The tool generates output in the `out` directory:
   - Dependencies (if any)
   - CLOC analysis results
   - Total files and nSLOC counts
+  - Change analysis for PRs, commits, and comparisons:
+    - Files changed with additions/deletions
+    - Total changes per file
+    - Changes filtered by configured patterns
 
 ## Contributing
 

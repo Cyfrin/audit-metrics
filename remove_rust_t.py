@@ -40,13 +40,15 @@ def remove_tests_from_all_rust_files(directory):
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
-
-            if 'test' in file:
-                os.remove(file_path)
-                print(f"REMOVED: {file_path}")
-            elif file.endswith('.rs') or file.endswith('.cairo'):
-                remove_inline_tests(file_path)
-                print(f"Processed: {file_path}")
+            
+            # Only process Rust and Cairo files
+            if file.endswith('.rs') or file.endswith('.cairo'):
+                if 'test' in file:
+                    os.remove(file_path)
+                    print(f"REMOVED: {file_path}")
+                else:
+                    remove_inline_tests(file_path)
+                    print(f"Processed: {file_path}")
 
 
 # Replace '.' with the path to your directory, or use os.getcwd() for current directory
